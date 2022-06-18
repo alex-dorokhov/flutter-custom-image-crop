@@ -34,6 +34,9 @@ class CustomImageCrop extends StatefulWidget {
   /// reserved for the cropping area
   final double cropPercentage;
 
+  /// width / height
+  final double aspectRatio;
+
   /// The path drawer of the border see [DottedCropPathPainter],
   /// [SolidPathPainter] for more details or how to implement a
   /// custom one
@@ -65,6 +68,7 @@ class CustomImageCrop extends StatefulWidget {
     this.backgroundColor = Colors.white,
     this.shape = CustomCropShape.Circle,
     this.cropPercentage = 0.8,
+    this.aspectRatio = 1.0,
     this.drawPath = DottedCropPathPainter.drawPath,
     Paint? imagePaintDuringCrop,
     Key? key,
@@ -137,13 +141,14 @@ class _CustomImageCropState extends State<CustomImageCrop> with CustomImageCropL
         _width = constraints.maxWidth;
         _height = constraints.maxHeight;
         final cropWidth = min(_width, _height) * widget.cropPercentage;
+        final cropHeight = cropWidth / widget.aspectRatio;
         final defaultScale = cropWidth / max(image.width, image.height);
         _uiImageScale = data.scale * defaultScale;
         _uiTransformMatrix
           ..setIdentity()
           ..scale(_uiImageScale)
           ..multiply(_transformMatrix);
-        _path = _getPath(cropWidth, _width, _height);
+        _path = _getPath(cropWidth, cropHeight, _width, _height);
         return XGestureDetector(
           onMoveUpdate: onMoveUpdate,
           onScaleStart: onScaleStart,
@@ -156,7 +161,7 @@ class _CustomImageCropState extends State<CustomImageCrop> with CustomImageCropL
               children: [
                 Positioned(
                   left: data.x + (_width - cropWidth) / 2,
-                  top: data.y + (_height - cropWidth) / 2,
+                  top: data.y + (_height - cropHeight) / 2,
                   child: Transform(
                     transform: _uiTransformMatrix,
                     child: Image(
@@ -189,8 +194,9 @@ class _CustomImageCropState extends State<CustomImageCrop> with CustomImageCropL
     final startMatrix = _scaleStartTransformMatrix;
     final tempMatrix = _tempScaleMatrix;
     final cropWidth = min(_width, _height) * widget.cropPercentage;
+    final cropHeight = cropWidth /widget.aspectRatio;
     final clipCenterX = cropWidth / 2 / _uiImageScale;
-    final clipCenterY = cropWidth / 2 / _uiImageScale;
+    final clipCenterY = cropHeight / 2 / _uiImageScale;
     final imageOrigin = vector_math.Vector3(clipCenterX, clipCenterY, 0)
       ..applyMatrix4(tempMatrix
         ..setFrom(startMatrix)
@@ -214,7 +220,7 @@ class _CustomImageCropState extends State<CustomImageCrop> with CustomImageCropL
     });
   }
 
-  Path _getPath(double cropWidth, double width, double height) {
+  Path _getPath(double cropWidth, double cropHeight, double width, double height) {
     switch (widget.shape) {
       case CustomCropShape.Circle:
         return Path()
@@ -230,7 +236,7 @@ class _CustomImageCropState extends State<CustomImageCrop> with CustomImageCropL
             Rect.fromCenter(
               center: Offset(width / 2, height / 2),
               width: cropWidth,
-              height: cropWidth,
+              height: cropHeight,
             ),
           );
     }
@@ -246,11 +252,12 @@ class _CustomImageCropState extends State<CustomImageCrop> with CustomImageCropL
     final pictureRecorder = ui.PictureRecorder();
     final canvas = Canvas(pictureRecorder);
     final cropWidth = max(imageWidth, imageHeight).toDouble();
-    final clipPath = Path.from(_getPath(cropWidth, cropWidth, cropWidth));
+    final cropHeight = cropWidth / widget.aspectRatio;
+    final clipPath = Path.from(_getPath(cropWidth, cropHeight, cropWidth, cropHeight));
     final bgPaint = Paint()
       ..color = widget.backgroundColor
       ..style = PaintingStyle.fill;
-    canvas.drawRect(Rect.fromLTWH(0, 0, cropWidth, cropWidth), bgPaint);
+    canvas.drawRect(Rect.fromLTWH(0, 0, cropWidth, cropHeight), bgPaint);
     canvas.save();
     canvas.clipPath(clipPath);
     canvas.transform(_transformMatrix.storage);
@@ -263,7 +270,7 @@ class _CustomImageCropState extends State<CustomImageCrop> with CustomImageCropL
     // final bytes = await compute(computeToByteData, <String, dynamic>{'pictureRecorder': pictureRecorder, 'cropWidth': cropWidth});
 
     ui.Picture picture = pictureRecorder.endRecording();
-    ui.Image image = await picture.toImage(cropWidth.floor(), cropWidth.floor());
+    ui.Image image = await picture.toImage(cropWidth.floor(), cropHeight.floor());
 
     // Adding compute would be preferrable. Unfortunately we cannot pass an ui image to this.
     // A workaround would be to save the image and load it inside of the isolate

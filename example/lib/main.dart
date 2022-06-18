@@ -68,6 +68,7 @@ class _MyHomePageState extends State<MyHomePage> {
               image: const NetworkImage(
                   'https://upload.wikimedia.org/wikipedia/en/7/7d/Lenna_%28test_image%29.png'),
               shape: CustomCropShape.Square,
+              aspectRatio:  2 / 1,
             ),
           ),
           Row(
