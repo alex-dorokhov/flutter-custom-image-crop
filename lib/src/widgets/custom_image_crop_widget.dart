@@ -90,6 +90,7 @@ class _CustomImageCropState extends State<CustomImageCrop> with CustomImageCropL
   Matrix4 _scaleStartTransformMatrix = Matrix4.zero();
   Matrix4 _tempScaleMatrix = Matrix4.identity();
   Matrix4 _uiTransformMatrix = Matrix4.identity();
+  bool _initialTransformIsSet = false;
 
   @override
   void initState() {
@@ -118,6 +119,7 @@ class _CustomImageCropState extends State<CustomImageCrop> with CustomImageCropL
   void _updateImage(ImageInfo imageInfo, _) {
     setState(() {
       _imageAsUIImage = imageInfo.image;
+      _initialTransformIsSet = false;
     });
   }
 
@@ -143,6 +145,15 @@ class _CustomImageCropState extends State<CustomImageCrop> with CustomImageCropL
         final cropWidth = min(_width, _height) * widget.cropPercentage;
         final cropHeight = cropWidth / widget.aspectRatio;
         final defaultScale = cropWidth / max(image.width, image.height);
+        if (!_initialTransformIsSet) {
+          final preferredScale = min(_width / image.width, _height / image.height);
+          _transformMatrix
+            ..setIdentity()
+            ..scale(preferredScale / defaultScale)
+            ..translate(-(image.width - cropWidth / preferredScale) * 0.5,
+                -(image.height - cropHeight / preferredScale) * 0.5);
+          _initialTransformIsSet = true;
+        }
         _uiImageScale = data.scale * defaultScale;
         _uiTransformMatrix
           ..setIdentity()
