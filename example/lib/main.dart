@@ -69,6 +69,8 @@ class _MyHomePageState extends State<MyHomePage> {
                   'https://upload.wikimedia.org/wikipedia/en/7/7d/Lenna_%28test_image%29.png'),
               shape: CustomCropShape.Square,
               aspectRatio:  2 / 1,
+              targetWidth: 100,
+              targetHeight: 50,
             ),
           ),
           Row(

@@ -45,6 +45,10 @@ class CustomImageCrop extends StatefulWidget {
   /// The paint used when drawing an image before cropping
   final Paint imagePaintDuringCrop;
 
+  final int? targetWidth;
+
+  final int? targetHeight;
+
   /// A custom image cropper widget
   ///
   /// Uses a `CustomImageCropController` to crop the image.
@@ -71,6 +75,8 @@ class CustomImageCrop extends StatefulWidget {
     this.aspectRatio = 1.0,
     this.drawPath = DottedCropPathPainter.drawPath,
     Paint? imagePaintDuringCrop,
+    this.targetWidth,
+    this.targetHeight,
     Key? key,
   })  : this.imagePaintDuringCrop = imagePaintDuringCrop ?? (Paint()..filterQuality = FilterQuality.high),
         super(key: key);
@@ -282,6 +288,19 @@ class _CustomImageCropState extends State<CustomImageCrop> with CustomImageCropL
 
     ui.Picture picture = pictureRecorder.endRecording();
     ui.Image image = await picture.toImage(cropWidth.floor(), cropHeight.floor());
+
+    final targetWidth = widget.targetWidth;
+    final targetHeight = widget.targetHeight;
+    if (targetWidth != null && targetHeight != null) {
+      // now resize with another canvas
+      final pictureRecorderResize = ui.PictureRecorder();
+      final canvasResize = Canvas(pictureRecorderResize);
+      paintImage(
+          canvas: canvasResize,
+          rect: Rect.fromLTWH(0, 0, targetWidth.toDouble(), targetHeight.toDouble()),
+          image: image);
+      image = await pictureRecorderResize.endRecording().toImage(targetWidth, targetHeight);
+    }
 
     // Adding compute would be preferrable. Unfortunately we cannot pass an ui image to this.
     // A workaround would be to save the image and load it inside of the isolate
