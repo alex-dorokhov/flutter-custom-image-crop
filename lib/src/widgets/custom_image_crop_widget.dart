@@ -97,6 +97,8 @@ class _CustomImageCropState extends State<CustomImageCrop> with CustomImageCropL
   Matrix4 _tempScaleMatrix = Matrix4.identity();
   Matrix4 _uiTransformMatrix = Matrix4.identity();
   bool _initialTransformIsSet = false;
+  double _rotation = 0;
+  double _tempRotation = 0;
 
   @override
   void initState() {
@@ -156,8 +158,8 @@ class _CustomImageCropState extends State<CustomImageCrop> with CustomImageCropL
           _transformMatrix
             ..setIdentity()
             ..scale(preferredScale / defaultScale)
-            ..translate(-(image.width - cropWidth / preferredScale) * 0.5,
-                -(image.height - cropHeight / preferredScale) * 0.5);
+            ..translate(
+                -(image.width - cropWidth / preferredScale) * 0.5, -(image.height - cropHeight / preferredScale) * 0.5);
           _initialTransformIsSet = true;
         }
         _uiImageScale = data.scale * defaultScale;
@@ -168,8 +170,10 @@ class _CustomImageCropState extends State<CustomImageCrop> with CustomImageCropL
         _path = _getPath(cropWidth, cropHeight, _width, _height);
         return XGestureDetector(
           onMoveUpdate: onMoveUpdate,
+          onMoveEnd: (event) => _onTransformEnd(),
           onScaleStart: onScaleStart,
           onScaleUpdate: onScaleUpdate,
+          onScaleEnd: _onTransformEnd,
           child: Container(
             width: _width,
             height: _height,
@@ -211,24 +215,119 @@ class _CustomImageCropState extends State<CustomImageCrop> with CustomImageCropL
     final startMatrix = _scaleStartTransformMatrix;
     final tempMatrix = _tempScaleMatrix;
     final cropWidth = min(_width, _height) * widget.cropPercentage;
-    final cropHeight = cropWidth /widget.aspectRatio;
+    final cropHeight = cropWidth / widget.aspectRatio;
     final clipCenterX = cropWidth / 2 / _uiImageScale;
     final clipCenterY = cropHeight / 2 / _uiImageScale;
     final imageOrigin = vector_math.Vector3(clipCenterX, clipCenterY, 0)
       ..applyMatrix4(tempMatrix
         ..setFrom(startMatrix)
         ..invert());
+    _tempRotation = -event.rotationAngle;
     tempMatrix
       ..setFromTranslationRotationScale(
           imageOrigin,
-          vector_math.Quaternion.axisAngle(vector_math.Vector3(0, 0, 1), -event.rotationAngle),
+          vector_math.Quaternion.axisAngle(vector_math.Vector3(0, 0, 1), _tempRotation),
           vector_math.Vector3(event.scale, event.scale, 1.0))
       ..translate(-imageOrigin);
     setState(() {
       _transformMatrix
         ..setFrom(startMatrix)
-        ..multiply(_tempScaleMatrix);
+        ..multiply(tempMatrix);
     });
+  }
+
+  //FIXME only rectangle is properly supported
+  void _onTransformEnd() {
+    _rotation = (_rotation + _tempRotation) % (pi);
+    _tempRotation = 0;
+    final imageWidth = _imageAsUIImage!.width.toDouble();
+    final imageHeight = _imageAsUIImage!.height.toDouble();
+    final cropWidth = max(imageWidth, imageHeight);
+    final cropHeight = cropWidth / widget.aspectRatio;
+    final clipPath = Path.from(_getPath(cropWidth, cropHeight, cropWidth, cropHeight));
+
+    var bounds = clipPath.getBounds();
+
+    // find corners of transformed image
+    var leftTop = vector_math.Vector3(0, 0, 0)..applyMatrix4(_transformMatrix);
+    var rightTop = vector_math.Vector3(imageWidth, 0, 0)..applyMatrix4(_transformMatrix);
+    var rightBottom = vector_math.Vector3(imageWidth, imageHeight, 0)..applyMatrix4(_transformMatrix);
+    var leftBottom = vector_math.Vector3(0, imageHeight, 0)..applyMatrix4(_transformMatrix);
+
+    // calc min scale
+    final minHeight = _rotation < pi / 2
+        ? cropHeight * cos(_rotation) + cropWidth * sin(_rotation)
+        : cropHeight * cos(pi - _rotation) + cropWidth * sin(pi - _rotation);
+    final minWidth = _rotation < pi / 2
+        ? cropWidth * cos(_rotation) + cropHeight * sin(_rotation)
+        : cropWidth * cos(pi - _rotation) + cropHeight * sin(pi - _rotation);
+    final actualWidth = (rightTop - leftTop).length;
+    final actualHeight = (rightTop - rightBottom).length;
+    final scaleDiff = max(minWidth / actualWidth, minHeight / actualHeight);
+    if (scaleDiff > 1.0) {
+      _transformMatrix.scale(scaleDiff, scaleDiff, 1.0); //TODO scale with animation
+    }
+
+    // calc solution box
+    final solutionBoxWidth = max(actualWidth, minWidth) - minWidth;
+    final solutionBoxHeight = max(actualHeight, minHeight) - minHeight;
+    final scaledLeftTop = vector_math.Vector3(0, 0, 0)..applyMatrix4(_transformMatrix);
+    final scaledRightBottom = vector_math.Vector3(imageWidth, imageHeight, 0)..applyMatrix4(_transformMatrix);
+    final middle = (scaledLeftTop + scaledRightBottom) / 2;
+    final leftRightDir = (rightTop - leftTop)..normalize();
+    final topBottomDir = (leftBottom - leftTop)..normalize();
+    final solutionBoxLeftTop =
+        middle - leftRightDir * (solutionBoxWidth * 0.5) - topBottomDir * (solutionBoxHeight * 0.5);
+    final solutionBoxRightTop =
+        middle + leftRightDir * (solutionBoxWidth * 0.5) - topBottomDir * (solutionBoxHeight * 0.5);
+    final solutionBoxLeftBottom =
+        middle - leftRightDir * (solutionBoxWidth * 0.5) + topBottomDir * (solutionBoxHeight * 0.5);
+    final solutionBoxRightBottom =
+        middle + leftRightDir * (solutionBoxWidth * 0.5) + topBottomDir * (solutionBoxHeight * 0.5);
+    final cropMiddle = bounds.center;
+    final cropMiddleVec = vector_math.Vector2(cropMiddle.dx, cropMiddle.dy);
+
+    final cropMiddleToTop = _vectorFromPointToLine(cropMiddleVec, solutionBoxLeftTop.xy, solutionBoxRightTop.xy);
+    final cropMiddleToBottom =
+        _vectorFromPointToLine(cropMiddleVec, solutionBoxLeftBottom.xy, solutionBoxRightBottom.xy);
+    final cropMiddleToLeft = _vectorFromPointToLine(cropMiddleVec, solutionBoxLeftTop.xy, solutionBoxLeftBottom.xy);
+    final cropMiddleToRight = _vectorFromPointToLine(cropMiddleVec, solutionBoxRightTop.xy, solutionBoxRightBottom.xy);
+
+    if (cropMiddleToTop.dot(cropMiddleToBottom) > 0 || cropMiddleToLeft.dot(cropMiddleToRight) > 0) {
+      // we are outside
+      final allVariants = [cropMiddleToTop, cropMiddleToBottom, cropMiddleToLeft, cropMiddleToRight];
+      final shortest = allVariants.reduce((value, e) => e.length2 < value.length2 ? e : value);
+      final targetPoint = cropMiddleVec + shortest;
+
+      // apply reverse transformation to points before matrix translation
+      final tempMatrix = _tempScaleMatrix
+        ..setFrom(_transformMatrix)
+        ..invert();
+      final cropMiddleTranslatedBack = vector_math.Vector3(cropMiddleVec.x, cropMiddleVec.y, 0)
+        ..applyMatrix4(tempMatrix);
+      final targetTranslatedBack = vector_math.Vector3(targetPoint.x, targetPoint.y, 0)..applyMatrix4(tempMatrix);
+      _tempScaleMatrix
+        ..setIdentity()
+        ..translate(
+            cropMiddleTranslatedBack.x - targetTranslatedBack.x, cropMiddleTranslatedBack.y - targetTranslatedBack.y);
+      _transformMatrix..multiply(tempMatrix); //TODO move with animation
+    }
+  }
+
+  vector_math.Vector2 _vectorFromPointToLine(
+      vector_math.Vector2 point, vector_math.Vector2 lineA, vector_math.Vector2 lineB) {
+    // if point is between segment limits, then both sides must form angle <= 90 => dot product is >= 0
+    var ba = lineA - lineB;
+    var bp = point - lineB;
+    var ab = lineB - lineA;
+    var ap = point - lineA;
+    if (ba.dot(bp) < 0) return -bp; // point is outside of segment but closer to B
+    if (ab.dot(ap) < 0) return -ap; // point is outside of segment but closer to A
+
+    // point is between A and B
+    var n = ab.normalized();
+    var pa = lineA - point;
+    return pa - n * pa.dot(n);
   }
 
   void onMoveUpdate(MoveEvent event) {
@@ -266,11 +365,11 @@ class _CustomImageCropState extends State<CustomImageCrop> with CustomImageCropL
     }
     final imageWidth = _imageAsUIImage!.width;
     final imageHeight = _imageAsUIImage!.height;
-    final pictureRecorder = ui.PictureRecorder();
-    final canvas = Canvas(pictureRecorder);
     final cropWidth = max(imageWidth, imageHeight).toDouble();
     final cropHeight = cropWidth / widget.aspectRatio;
     final clipPath = Path.from(_getPath(cropWidth, cropHeight, cropWidth, cropHeight));
+    final pictureRecorder = ui.PictureRecorder();
+    final canvas = Canvas(pictureRecorder);
     final bgPaint = Paint()
       ..color = widget.backgroundColor
       ..style = PaintingStyle.fill;
